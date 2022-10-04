@@ -28,7 +28,7 @@ import os
 import time
 from timeit import default_timer as timer
 
-from utils.data_utils import *
+from dutils.data_utils import *
 
 # folder to load config file
 # CONFIG_PATH = "../"

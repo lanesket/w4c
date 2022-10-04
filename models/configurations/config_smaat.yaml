@@ -1,7 +1,7 @@
 experiment: # Settings for the current experiment
-  name: "U-NET-252" # name of the current experiment for logging
+  name: "SmaAt" # name of the current experiment for logging
   experiment_folder: "lightning_logs/" # folder to save logs
-  sub_folder: "baseline" # logging sub-folder
+  sub_folder: "smaat" # logging sub-folder
   precision: 32 # bit precision of weights. 32 or 16
   logging: True # Toggle logging on/off
 dataset:
@@ -21,7 +21,8 @@ dataset:
       "WV_062",
       "WV_073",
     ]
-  regions: ["boxi_0015", "boxi_0034", "boxi_0076"]
+  regions: ["boxi_0015"]
+  # 'boxi_0034', 'boxi_0076'
   # or, e.g., ['boxi_0015'] if you want to train your model for one region only
   input_product: REFL-BT
   output_product: RATE
@@ -127,7 +128,7 @@ train: # model training settings
   batch_size: 16 # 40
   max_epochs: 90
   n_workers: 8 # 16
-  loss: BCEWithLogitsLoss
+  loss: MSE
   pos_weight: 6.114572
   early_stopping: True
   patience: 5
@@ -137,7 +138,7 @@ train: # model training settings
   dropout_rate: 0.4
 
 model: # model definition settings
-  model_name: 3D_UNET_base
+  model_name: SmaAt
   in_channels: 11
   gradient_clip_val: 2.0
   gradient_clip_algorithm: value

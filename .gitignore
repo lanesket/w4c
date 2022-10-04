@@ -150,3 +150,6 @@ dmypy.json
 
 #vsc
 .vscode/
+
+wandb
+weather4cast
