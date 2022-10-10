@@ -261,12 +261,12 @@ class DiceLoss(nn.Module):
         targets = targets.view(-1)
 
         intersection = (inputs * targets).sum()
-        print('intersection', intersection)
-        print('inputs', inputs.sum())
-        print('targets', targets.sum())
+        # print('intersection', intersection)
+        # print('inputs', inputs.sum())
+        # print('targets', targets.sum())
         dice = (2.*intersection + smooth) / \
             (inputs.sum() + targets.sum() + smooth)
-        print(1-dice)
+        # print(1 - dice)
         return 1 - dice
 
 

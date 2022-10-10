@@ -55,7 +55,8 @@ def get_trainer(gpus: list, params: dict) -> pl.Trainer:
         project="weather4cast",
         entity='ctu-meteopress',
         save_code=True,
-        notes='')
+        # notes=params['experiment']['notes']
+        )
 
     callbacks = [
         ModelCheckpoint(monitor='val_loss_epoch', save_top_k=3, save_last=True,
@@ -90,6 +91,14 @@ def train(params: dict, gpus: list, mode: str):
     if mode == 'train':
         trainer.fit(model, data)
         wandb.finish()
+    elif mode == 'predict':
+        if len(params["dataset"]["regions"]) > 1 or params["predict"]["region_to_predict"] != str(params["dataset"]["regions"][0]):
+            print("EXITING... \"regions\" and \"regions to predict\" must indicate the same region name in your config file.")
+        else:
+            scores = trainer.predict(model, data.test_dataloader())
+            scores = torch.concat(scores)
+            tensor_to_submission_file(scores, params['predict'])
+            wandb.finish()
 
 
 def set_parser():
@@ -104,6 +113,8 @@ def set_parser():
                         help="init a model from a checkpoint path. '' as default (random weights)")
     parser.add_argument("-n", "--name", type=str, required=False, default='',
                         help="Set the name of the experiment")
+    parser.add_argument("-no", "--notes", type=str, required=False, default='',
+                        help="Set the description of the experiment")
 
     return parser
 
@@ -115,6 +126,7 @@ def update_params_based_on_args(options):
     if options.name != '':
         print(params['experiment']['name'])
         params['experiment']['name'] = options.name
+        params['experiment']['notes'] = options.notes + ''
     return params
 
 
