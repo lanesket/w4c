@@ -1,5 +1,5 @@
 import argparse
-from models.smaat import ModelBase, SmaAt
+from models.models import ModelBase, SmaAt_Lightning, RotUNet_Lightning
 import pytorch_lightning as pl
 from pytorch_lightning.callbacks import ModelCheckpoint
 from torch.utils.data import DataLoader
@@ -56,7 +56,7 @@ def get_trainer(gpus: list, params: dict) -> pl.Trainer:
         entity='ctu-meteopress',
         save_code=True,
         # notes=params['experiment']['notes']
-        )
+    )
 
     callbacks = [
         ModelCheckpoint(monitor='val_loss_epoch', save_top_k=3, save_last=True,
@@ -80,7 +80,11 @@ def get_trainer(gpus: list, params: dict) -> pl.Trainer:
 
 
 def get_model(params) -> ModelBase:
-    return SmaAt(params)
+    model_name = params['model']['model_name']
+    if model_name == 'SmaAt':
+        return SmaAt_Lightning(params)
+    elif model_name == 'RotUNet':
+        return RotUNet_Lightning(params)
 
 
 def train(params: dict, gpus: list, mode: str):

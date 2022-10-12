@@ -5,6 +5,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torchvision.transforms as T
 from meteopress.models.unet_attention.model import UNet_Attention
+from meteopress.models.equivariant.model import RotUNet
 from dutils.evaluate import *
 from torchvision.utils import make_grid
 from models.losses import *
@@ -16,6 +17,10 @@ class ModelBase(pl.LightningModule):
         self.save_hyperparameters()
         self.params = params
         self.loss = params['train']['loss']
+        self.n_channels = self.params['dataset']['in_channels'] * \
+            self.params['dataset']['len_seq_in']
+        self.n_classes = self.params['dataset']['out_channels'] * \
+            self.params['dataset']['len_seq_predict']
 
         losses = {
             'MSE': F.mse_loss,
@@ -31,6 +36,8 @@ class ModelBase(pl.LightningModule):
         }
 
         self.loss_fn = losses[self.loss]
+        self.srcnn = SRCNN(self.n_classes)
+        self.model = None
 
     def retrieve_only_valid_pixels(self, x, mask):
         """ we asume 1s in mask are invalid pixels """
@@ -66,68 +73,23 @@ class ModelBase(pl.LightningModule):
 
         return [optimizer], [scheduler]
 
-
-class SRCNN(nn.Module):
-    def __init__(self, channels):
-        super(SRCNN, self).__init__()
-
-        self.model = nn.Sequential(
-            nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True),
-            nn.Conv2d(channels, channels * 2, kernel_size=9, padding=2,
-                      padding_mode='replicate'),
-            nn.ReLU(inplace=True),
-
-            nn.Conv2d(channels * 2, channels, kernel_size=1, padding=2,
-                      padding_mode='replicate'),
-
-            nn.Upsample(scale_factor=3, mode='bilinear', align_corners=True),
-            torch.nn.ReLU(inplace=True),
-            nn.Conv2d(channels, channels, kernel_size=5, padding=2,
-                      padding_mode='replicate'),
-            torch.nn.ReLU(inplace=True),
-            nn.Conv2d(channels, channels, kernel_size=1, padding=0,
-                      padding_mode='replicate'),
-        )
-
-    def forward(self, x):
-        return self.model(x)
-
-
-class SmaAt(ModelBase):
-    def __init__(self, params: dict):
-        super().__init__(params)
-
-        n_channels = self.params['dataset']['in_channels'] * \
-            self.params['dataset']['len_seq_in']
-        n_classes = self.params['dataset']['out_channels'] * \
-            self.params['dataset']['len_seq_predict']
-
-        self.model = UNet_Attention(
-            n_channels=n_channels,
-            n_classes=n_classes,
-            dropout=self.params['train']['dropout_rate']
-        )
-
-        self.srcnn = SRCNN(n_classes)
-
-        # satellite - 12x12 km region
-        # radar - 2x2 km region
-        image_size = 252
-        crop_size = int((2 / 12) * image_size)
-        self.radar_crop = T.CenterCrop((crop_size, crop_size))
-
     def forward(self, x):
         x = x.flatten(1, 2)
         return self.model(x)
 
+    def get_pred(self, x):
+        pass
+
+    def apply_gt_boundary(self, pred):
+        idx_gt = pred > 0
+        pred[idx_gt] = 1
+        pred[~idx_gt] = 0
+
+        return pred
+
     def training_step(self, batch, batch_idx):
         x, y, meta = batch
-        x = x.swapaxes(1, 2)
-        pred = self(x)
-        pred = self.radar_crop(pred)
-        # 32 -> 252
-        pred = self.srcnn(pred)
-        pred = pred.unsqueeze(1)
+        pred = self.get_pred(x)
 
         mask = self.get_target_mask(meta)
         loss = self.calculate_loss(pred, y, mask)
@@ -139,19 +101,12 @@ class SmaAt(ModelBase):
 
     def validation_step(self, batch, batch_idx):
         x, y, meta = batch
-        x = x.swapaxes(1, 2)
-        pred = self(x)
-        pred = self.radar_crop(pred)
-        # 32 -> 252
-        pred = self.srcnn(pred)
-        pred = pred.unsqueeze(1)  # [B, 1, 32, 252, 252]
+        pred = self.get_pred(x)
 
         mask = self.get_target_mask(meta)
         loss = self.calculate_loss(pred, y, mask)
 
-        idx_gt = pred > 0
-        pred[idx_gt] = 1
-        pred[~idx_gt] = 0
+        pred = self.apply_gt_boundary(pred)
 
         wandb.log({
             'Precipitation Map': [wandb.Image(make_grid(pred[0].swapaxes(0, 1)), caption='Prediction'),
@@ -182,19 +137,12 @@ class SmaAt(ModelBase):
 
     def test_step(self, batch, batch_idx):
         x, y, meta = batch
-        x = x.swapaxes(1, 2)
-        pred = self(x)
-        pred = self.radar_crop(pred)
-        # 32 -> 252
-        pred = self.srcnn(pred)
-        pred = pred.unsqueeze(1)
+        pred = self.get_pred(x)
 
         mask = self.get_target_mask(meta)
         loss = self.calculate_loss(pred, y, mask)
 
-        idx_gt0 = pred >= 0
-        pred[idx_gt0] = 1
-        pred[~idx_gt0] = 0
+        pred = self.apply_gt_boundary(pred)
 
         recall, precision, f1, acc, csi = recall_precision_f1_acc(y, pred)
         iou = iou_class(pred, y)
@@ -213,15 +161,90 @@ class SmaAt(ModelBase):
 
     def predict_step(self, batch, batch_idx):
         x, _, _ = batch
+        pred = self.get_pred(x)
+        pred = self.apply_gt_boundary(pred)
+
+        return pred
+
+
+class SRCNN(nn.Module):
+    def __init__(self, channels):
+        super(SRCNN, self).__init__()
+
+        self.model = nn.Sequential(
+            nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True),
+            nn.Conv2d(channels, channels * 2, kernel_size=9, padding=2,
+                      padding_mode='replicate'),
+            nn.ReLU(inplace=True),
+
+            nn.Conv2d(channels * 2, channels, kernel_size=1, padding=2,
+                      padding_mode='replicate'),
+
+            nn.Upsample(scale_factor=3, mode='bilinear', align_corners=True),
+            torch.nn.ReLU(inplace=True),
+            nn.Conv2d(channels, channels, kernel_size=5, padding=2,
+                      padding_mode='replicate'),
+            torch.nn.ReLU(inplace=True),
+            nn.Conv2d(channels, channels, kernel_size=1, padding=0,
+                      padding_mode='replicate'),
+        )
+
+    def forward(self, x):
+        return self.model(x)
+
+
+class RotUNet_Lightning(ModelBase):
+    def __init__(self, params: dict):
+        super().__init__(params)
+
+        kernel_size = 5
+        N = 8
+        self.model = RotUNet(self.n_channels, self.n_classes, kernel_size, N).to('cuda')
+
+        self.image_size = 256
+        self.crop_size = int((2 / 12) * self.image_size)
+        self.radar_crop = T.CenterCrop((self.crop_size, self.crop_size))
+
+        self.resize = T.Resize((self.image_size, self.image_size))
+
+    def forward(self, x):
+        x = self.resize(x.flatten(1, 2))
+        return self.model(x)
+
+    def get_pred(self, x):
+        x = x.swapaxes(1, 2)
+        pred = self(x)
+        pred = self.radar_crop(pred)
+        
+        # 32 -> 252
+        pred = self.srcnn(pred)
+        pred = pred.unsqueeze(1)  # [B, 1, 32, 252, 252]
+
+        return pred
+
+
+class SmaAt_Lightning(ModelBase):
+    def __init__(self, params: dict):
+        super().__init__(params)
+
+        self.model = UNet_Attention(
+            n_channels=self.n_channels,
+            n_classes=self.n_classes,
+            dropout=self.params['train']['dropout_rate']
+        )
+
+        # satellite - 12x12 km region
+        # radar - 2x2 km region
+        self.image_size = 252
+        self.crop_size = int((2 / 12) * self.image_size)
+        self.radar_crop = T.CenterCrop((self.crop_size, self.crop_size))
+
+    def get_pred(self, x):
         x = x.swapaxes(1, 2)
         pred = self(x)
         pred = self.radar_crop(pred)
         # 32 -> 252
         pred = self.srcnn(pred)
-        pred = pred.unsqueeze(1)
-
-        idx_gt0 = pred >= 0
-        pred[idx_gt0] = 1
-        pred[~idx_gt0] = 0
+        pred = pred.unsqueeze(1)  # [B, 1, 32, 252, 252]
 
         return pred

@@ -1,7 +1,7 @@
 experiment: # Settings for the current experiment
-  name: "SmaAt" # name of the current experiment for logging
+  name: "RotUNet" # name of the current experiment for logging
   experiment_folder: "lightning_logs/" # folder to save logs
-  sub_folder: "smaat" # logging sub-folder
+  sub_folder: "rot_unet" # logging sub-folder
   precision: 32 # bit precision of weights. 32 or 16
   logging: True # Toggle logging on/off
 dataset:
@@ -21,7 +21,7 @@ dataset:
       "WV_062",
       "WV_073",
     ]
-  regions: ["boxi_0076"]
+  regions: ["boxi_0015", "boxi_0034", "boxi_0076"]
   # 'boxi_0015', 'boxi_0034', 'boxi_0076'
   # or, e.g., ['boxi_0015'] if you want to train your model for one region only
   input_product: REFL-BT
@@ -125,24 +125,24 @@ dataset:
       standardise: True
 
 train: # model training settings
-  batch_size: 24 # 40
-  max_epochs: 30
-  n_workers: 8 # 16
+  batch_size: 16 # 40
+  max_epochs: 50
+  n_workers: 16 # 16
   loss: BCEWithLogitsLoss
   pos_weight: 6.114572
   early_stopping: True
-  patience: 5
+  patience: 3
   lr: 1e-4
-  weight_decay: 2e-2
+  weight_decay: 0
   init_filter_size: 32
-  dropout_rate: 0.2
+  dropout_rate: 0.1
 
 model: # model definition settings
-  model_name: SmaAt
+  model_name: "RotUNet"
   in_channels: 11
   gradient_clip_val: 2.0
   gradient_clip_algorithm: value
 
 predict: # model prediction settings
-  region_to_predict: boxi_0076 # must match one of the names defined in 'dataset' / 'regions'
+  region_to_predict: boxi_0015 # must match one of the names defined in 'dataset' / 'regions'
   year_to_predict: 2019
