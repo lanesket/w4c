@@ -199,7 +199,8 @@ class RotUNet_Lightning(ModelBase):
 
         kernel_size = 5
         N = 8
-        self.model = RotUNet(self.n_channels, self.n_classes, kernel_size, N).to('cuda')
+        self.model = RotUNet(self.n_channels, self.n_classes,
+                             kernel_size, N).to('cuda')
 
         self.image_size = 256
         self.crop_size = int((2 / 12) * self.image_size)
@@ -215,7 +216,7 @@ class RotUNet_Lightning(ModelBase):
         x = x.swapaxes(1, 2)
         pred = self(x)
         pred = self.radar_crop(pred)
-        
+
         # 32 -> 252
         pred = self.srcnn(pred)
         pred = pred.unsqueeze(1)  # [B, 1, 32, 252, 252]

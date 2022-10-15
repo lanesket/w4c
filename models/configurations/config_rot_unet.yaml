@@ -125,17 +125,17 @@ dataset:
       standardise: True
 
 train: # model training settings
-  batch_size: 16 # 40
+  batch_size: 15 # 40
   max_epochs: 50
   n_workers: 16 # 16
-  loss: BCEWithLogitsLoss
+  loss: DiceFocalLoss
   pos_weight: 6.114572
   early_stopping: True
   patience: 3
   lr: 1e-4
   weight_decay: 0
   init_filter_size: 32
-  dropout_rate: 0.1
+  dropout_rate: 0.2
 
 model: # model definition settings
   model_name: "RotUNet"
