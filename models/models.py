@@ -1,3 +1,4 @@
+from sched import scheduler
 import pytorch_lightning as pl
 import wandb
 import torch
@@ -16,6 +17,7 @@ class ModelBase(pl.LightningModule):
         super().__init__()
         self.save_hyperparameters()
         self.params = params
+        self.lr = float(self.params['train']["lr"])
         self.loss = params['train']['loss']
         self.n_channels = self.params['dataset']['in_channels'] * \
             self.params['dataset']['len_seq_in']
@@ -60,15 +62,15 @@ class ModelBase(pl.LightningModule):
     def configure_optimizers(self):
         optimizer = torch.optim.AdamW(
             self.parameters(),
-            lr=float(self.params['train']["lr"]),
+            lr=self.lr,
             weight_decay=float(self.params['train']["weight_decay"]))
 
         scheduler = {
             'scheduler': torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer,
                                                                     mode="min",
                                                                     factor=0.1,
-                                                                    patience=4),
-            'monitor': 'val_loss_epoch',
+                                                                    patience=2),
+            'monitor': 'train_loss',
         }
 
         return [optimizer], [scheduler]
@@ -200,7 +202,7 @@ class RotUNet_Lightning(ModelBase):
         kernel_size = 5
         N = 8
         self.model = RotUNet(self.n_channels, self.n_classes,
-                             kernel_size, N).to('cuda')
+                             kernel_size, N).to('cuda:0')
 
         self.image_size = 256
         self.crop_size = int((2 / 12) * self.image_size)
@@ -249,3 +251,21 @@ class SmaAt_Lightning(ModelBase):
         pred = pred.unsqueeze(1)  # [B, 1, 32, 252, 252]
 
         return pred
+
+
+class SmaAt_Rot_UNet_Ensemble_Lightning(ModelBase):
+    def __init__(self, params, smaat: SmaAt_Lightning, rot_unet: RotUNet_Lightning):
+        super().__init__()
+        self.save_hyperparameters(params)
+        self.smaat = smaat
+        self.rot_unet = rot_unet
+        self.smaat.freeze()
+        self.rot_unet.freeze()
+
+        self.model = None
+
+    def forward(self, x):
+        pass
+
+    def get_pred(self, x):
+        pass

@@ -1,7 +1,7 @@
 import argparse
 from models.models import ModelBase, SmaAt_Lightning, RotUNet_Lightning
 import pytorch_lightning as pl
-from pytorch_lightning.callbacks import ModelCheckpoint
+from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor
 from torch.utils.data import DataLoader
 from pytorch_lightning import loggers as pl_loggers
 from pytorch_lightning.callbacks.early_stopping import EarlyStopping
@@ -50,17 +50,23 @@ class DataModule(pl.LightningDataModule):
 
 def get_trainer(gpus: list, params: dict) -> pl.Trainer:
     wandb.login(key="fc80d2f1bb37c383bfd7a9bb85cf0aac6d792d19", relogin=True)
+    # wandb.init(
+    #     name=params['experiment']['name'],
+    #     project="weather4cast",
+    #     entity='ctu-meteopress',
+    #     save_code=True
+    # )
     wandb_logger = pl.loggers.WandbLogger(
         name=params['experiment']['name'],
         project="weather4cast",
         entity='ctu-meteopress',
-        save_code=True,
-        # notes=params['experiment']['notes']
+        save_code=True
     )
 
     callbacks = [
         ModelCheckpoint(monitor='val_loss_epoch', save_top_k=3, save_last=True,
-                        filename='{epoch:02d}-{val_loss_epoch:.6f}')
+                        filename='{epoch:02d}-{val_loss_epoch:.6f}'),
+        LearningRateMonitor()
     ]
 
     if params['train']['early_stopping']:
@@ -76,7 +82,8 @@ def get_trainer(gpus: list, params: dict) -> pl.Trainer:
                       callbacks=callback_funcs,
                       logger=wandb_logger,
                       profiler='simple',
-                      precision=params['experiment']['precision'])
+                      precision=params['experiment']['precision'],
+                      auto_lr_find=True)
 
 
 def get_model(params) -> ModelBase:
@@ -93,6 +100,7 @@ def train(params: dict, gpus: list, mode: str):
     trainer = get_trainer(gpus, params)
 
     if mode == 'train':
+        # trainer.tune(model, data)
         trainer.fit(model, data)
         wandb.finish()
     elif mode == 'predict':
@@ -131,6 +139,7 @@ def update_params_based_on_args(options):
         print(params['experiment']['name'])
         params['experiment']['name'] = options.name
         params['experiment']['notes'] = options.notes + ''
+
     return params
 
 
