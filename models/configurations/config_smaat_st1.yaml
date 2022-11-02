@@ -1,6 +1,6 @@
 experiment: # Settings for the current experiment
-  name: "SmaAt" # name of the current experiment for logging
-  experiment_folder: "lightning_logs/" # folder to save logs
+  name: "SmaAt-FocalLoss" # name of the current experiment for logging
+  experiment_folder: 'lightning_logs/smaat_st1/' # folder to save logs
   sub_folder: "smaat" # logging sub-folder
   precision: 32 # bit precision of weights. 32 or 16
   logging: True # Toggle logging on/off
@@ -21,7 +21,7 @@ dataset:
       "WV_062",
       "WV_073",
     ]
-  regions: ["boxi_0076"]
+  regions: ["boxi_0015", "boxi_0034", "boxi_0076"]
   # 'boxi_0015', 'boxi_0034', 'boxi_0076'
   # or, e.g., ['boxi_0015'] if you want to train your model for one region only
   input_product: REFL-BT
@@ -33,8 +33,8 @@ dataset:
   size_target_center: 252 # 42*6;
   len_seq_in: 4 # number of input slots per training sequence
   len_seq_predict: 32 # output slots; both still hard-coded in places!
-  data_root: "/home/fit/deep-ensemble/Rudolf/weather4cast-2022/data/2019"
-  splits_path: "/home/fit/deep-ensemble/Rudolf/weather4cast-2022/data/2019/timestamps_and_splits_2019.csv"
+  data_root: "/home/datalab/notebooks/Jirka/weather4cast2022/data/2019"
+  splits_path: "/home/datalab/notebooks/Jirka/weather4cast2022/data/timestamps_and_splits_2019.csv"
   path_to_sample_ids: "dutils/cached_sample_ids/samples_IDs_2019_stage1.pkl" # path cache file for data splits
 
   preprocess_OPERA:
@@ -125,17 +125,19 @@ dataset:
       standardise: True
 
 train: # model training settings
-  batch_size: 24 # 40
-  max_epochs: 30
-  n_workers: 8 # 16
-  loss: BCEWithLogitsLoss
+  batch_size: 38 # 40
+  max_epochs: 60
+  n_workers: 16 # 16
+  loss: FocalLoss
   pos_weight: 6.114572
   early_stopping: True
   patience: 5
-  lr: 1e-4
-  weight_decay: 2e-2
+  lr: 1e-5
+  weight_decay: 0.1
   init_filter_size: 32
-  dropout_rate: 0.2
+  dropout_rate: 0.1
+  boundary: 0
+  apply_boundary: False
 
 model: # model definition settings
   model_name: SmaAt
@@ -144,5 +146,5 @@ model: # model definition settings
   gradient_clip_algorithm: value
 
 predict: # model prediction settings
-  region_to_predict: boxi_0076 # must match one of the names defined in 'dataset' / 'regions'
+  region_to_predict: boxi_0015 # must match one of the names defined in 'dataset' / 'regions'
   year_to_predict: 2019

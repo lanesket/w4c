@@ -1,4 +1,4 @@
-from sched import scheduler
+from typing import List
 import pytorch_lightning as pl
 import wandb
 import torch
@@ -10,6 +10,7 @@ from meteopress.models.equivariant.model import RotUNet
 from dutils.evaluate import *
 from torchvision.utils import make_grid
 from models.losses import *
+from torchmetrics import StructuralSimilarityIndexMeasure
 
 
 class ModelBase(pl.LightningModule):
@@ -23,6 +24,7 @@ class ModelBase(pl.LightningModule):
             self.params['dataset']['len_seq_in']
         self.n_classes = self.params['dataset']['out_channels'] * \
             self.params['dataset']['len_seq_predict']
+        self.apply_boundary = self.params['train']['apply_boundary']
 
         losses = {
             'MSE': F.mse_loss,
@@ -82,8 +84,8 @@ class ModelBase(pl.LightningModule):
     def get_pred(self, x):
         pass
 
-    def apply_gt_boundary(self, pred):
-        idx_gt = pred > 0
+    def apply_gt_boundary(self, pred, boundary=0):
+        idx_gt = pred > boundary
         pred[idx_gt] = 1
         pred[~idx_gt] = 0
 
@@ -96,8 +98,11 @@ class ModelBase(pl.LightningModule):
         mask = self.get_target_mask(meta)
         loss = self.calculate_loss(pred, y, mask)
 
-        self.log('train_loss', loss,
-                 batch_size=self.params['train']['batch_size'], sync_dist=True)
+        self.log_dict(
+            {
+                'train_loss': loss,
+            },
+            batch_size=self.params['train']['batch_size'], sync_dist=True)
 
         return loss
 
@@ -108,25 +113,34 @@ class ModelBase(pl.LightningModule):
         mask = self.get_target_mask(meta)
         loss = self.calculate_loss(pred, y, mask)
 
-        pred = self.apply_gt_boundary(pred)
-
         wandb.log({
             'Precipitation Map': [wandb.Image(make_grid(pred[0].swapaxes(0, 1)), caption='Prediction'),
                                   wandb.Image(make_grid(y[0].swapaxes(0, 1)), caption='GT')]
         })
 
-        recall, precision, f1, acc, csi = recall_precision_f1_acc(y, pred)
-        iou = iou_class(pred, y)
+        if self.apply_boundary:
+            pred = self.apply_gt_boundary(
+                pred, self.params['train']['boundary'])
 
+        if self.apply_boundary:
+            recall, precision, f1, acc, csi = recall_precision_f1_acc(y, pred)
+            iou = iou_class(pred, y)
+
+            self.log_dict(
+                {
+                    'val_recall': recall,
+                    'val_precision': precision,
+                    'val_f1': f1,
+                    'val_acc': acc,
+                    'val_csi': csi,
+                    'val_iou': iou
+                },
+                batch_size=self.params['train']['batch_size'], sync_dist=True)
+        
         self.log_dict(
             {
                 'val_loss': loss,
-                'val_recall': recall,
-                'val_precision': precision,
-                'val_f1': f1,
-                'val_acc': acc,
-                'val_csi': csi,
-                'val_iou': iou
+                'val_ssim': StructuralSimilarityIndexMeasure()(pred, y)
             },
             batch_size=self.params['train']['batch_size'], sync_dist=True)
 
@@ -144,9 +158,11 @@ class ModelBase(pl.LightningModule):
         mask = self.get_target_mask(meta)
         loss = self.calculate_loss(pred, y, mask)
 
-        pred = self.apply_gt_boundary(pred)
+        if self.apply_boundary:
+            pred = self.apply_gt_boundary(pred)
 
-        recall, precision, f1, acc, csi = recall_precision_f1_acc(y, pred)
+        if self.apply_boundary:
+            recall, precision, f1, acc, csi = recall_precision_f1_acc(y, pred)
         iou = iou_class(pred, y)
 
         self.log_dict(
@@ -164,7 +180,9 @@ class ModelBase(pl.LightningModule):
     def predict_step(self, batch, batch_idx):
         x, _, _ = batch
         pred = self.get_pred(x)
-        pred = self.apply_gt_boundary(pred)
+
+        if self.apply_boundary:
+            pred = self.apply_gt_boundary(pred, -9)
 
         return pred
 
@@ -183,10 +201,10 @@ class SRCNN(nn.Module):
                       padding_mode='replicate'),
 
             nn.Upsample(scale_factor=3, mode='bilinear', align_corners=True),
-            torch.nn.ReLU(inplace=True),
+            nn.ReLU(inplace=True),
             nn.Conv2d(channels, channels, kernel_size=5, padding=2,
                       padding_mode='replicate'),
-            torch.nn.ReLU(inplace=True),
+            nn.ReLU(inplace=True),
             nn.Conv2d(channels, channels, kernel_size=1, padding=0,
                       padding_mode='replicate'),
         )
@@ -202,7 +220,8 @@ class RotUNet_Lightning(ModelBase):
         kernel_size = 5
         N = 8
         self.model = RotUNet(self.n_channels, self.n_classes,
-                             kernel_size, N).to('cuda:0')
+                             kernel_size, N)
+        #  .to(f'cuda:{gpu}')
 
         self.image_size = 256
         self.crop_size = int((2 / 12) * self.image_size)
@@ -212,11 +231,17 @@ class RotUNet_Lightning(ModelBase):
 
     def forward(self, x):
         x = self.resize(x.flatten(1, 2))
-        return self.model(x)
+        pred = self.model(x)
+        pred = self.radar_crop(pred)
+        # 32 -> 252
+        pred = self.srcnn(pred)
+
+        return pred
 
     def get_pred(self, x):
         x = x.swapaxes(1, 2)
-        pred = self(x)
+        x = self.resize(x.flatten(1, 2))
+        pred = self.model(x)
         pred = self.radar_crop(pred)
 
         # 32 -> 252
@@ -253,19 +278,41 @@ class SmaAt_Lightning(ModelBase):
         return pred
 
 
-class SmaAt_Rot_UNet_Ensemble_Lightning(ModelBase):
-    def __init__(self, params, smaat: SmaAt_Lightning, rot_unet: RotUNet_Lightning):
-        super().__init__()
-        self.save_hyperparameters(params)
-        self.smaat = smaat
-        self.rot_unet = rot_unet
-        self.smaat.freeze()
-        self.rot_unet.freeze()
+class Ensemble_Lightning(ModelBase):
+    def __init__(self, params, gpu=2):
+        super().__init__(params)
 
-        self.model = None
+        # .to(f'cuda:{gpu}')
+
+        smaat = SmaAt_Lightning.load_from_checkpoint(
+            '/home/datalab/notebooks/Rudolf/weather4cast/SmaAt-Focal-epoch=39-step=152079.ckpt').to(f'cuda:{gpu}')
+        rot_unet = RotUNet_Lightning.load_from_checkpoint(
+            '/home/datalab/notebooks/Rudolf/weather4cast/RoTUNet-epoch=9-step=40549.ckpt', strict=False).to(f'cuda:{gpu}')
+
+        self.ensemble_models = [smaat, rot_unet]
+
+        for m in self.ensemble_models:
+            m.freeze()
+
+        num_models = len(self.ensemble_models)
+        self.srcnn = None
+        self.model = nn.Sequential(
+            nn.Conv2d(self.n_classes * num_models,
+                      self.n_classes, kernel_size=(1, 1)),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(self.n_classes,
+                      self.n_classes, kernel_size=(1, 1)),
+        )
 
     def forward(self, x):
-        pass
+        ensemble_pred = [m(x) for m in self.ensemble_models]
+        # [B, 1, 32 * num_models, 252, 252]
+        x = torch.cat(ensemble_pred, dim=1)
+        return self.model(x)  # [B, 1, 32, 252, 252]
 
     def get_pred(self, x):
-        pass
+        x = x.swapaxes(1, 2)
+        pred = self(x)
+        pred = pred.unsqueeze(1)
+
+        return pred

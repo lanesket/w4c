@@ -25,6 +25,7 @@
 import numpy as np
 from torch.utils.data import Dataset
 import os
+import sys
 import time
 from timeit import default_timer as timer
 
@@ -32,6 +33,8 @@ from dutils.data_utils import *
 
 # folder to load config file
 # CONFIG_PATH = "../"
+
+# VERBOSE = True
 VERBOSE = False
 
 """
@@ -42,21 +45,37 @@ Assumptions:
 
 
 class RainData(Dataset):
-    def __init__(self, data_split, project_root='', data_root='', input_product="REFL-BT",
-                 compute_seq=True, output_product="RATE", sat_bands=[],
-                 preprocess_OPERA=None,
-                 size_target_center=None, full_opera_context=None,
-                 preprocess_HRIT=None, path_to_sample_ids='',
-                 len_seq_in=4, len_seq_predict=32,
-                 regions=['boxi_0015'], regions_def={}, generate_samples=False,
-                 latlon_path='', altitudes_path='',
-                 splits_path=None, swap_time_ch=False,
-                 **kwargs):
+    def __init__(
+        self,
+        data_split,
+        project_root="",
+        data_root="",
+        input_product="REFL-BT",
+        compute_seq=True,
+        output_product="RATE",
+        sat_bands=[],
+        preprocess_OPERA=None,
+        size_target_center=None,
+        full_opera_context=None,
+        preprocess_HRIT=None,
+        path_to_sample_ids="",
+        len_seq_in=4,
+        len_seq_predict=32,
+        regions=["boxi_0015"],
+        regions_def={},
+        generate_samples=False,
+        latlon_path="",
+        altitudes_path="",
+        splits_path=None,
+        swap_time_ch=False,
+        years=None,
+        **kwargs
+    ):
         start = timer()
         # Data Dimensions
         self.len_seq_in = len_seq_in
         self.len_seq_predict = len_seq_predict
-        self.channel_dim = 1  #  where to concat channels in structure
+        self.channel_dim = 1  # where to concat channels in structure
 
         # type of data & processing variables
         self.sat_bands = sat_bands
@@ -66,15 +85,16 @@ class RainData(Dataset):
         self.preprocess_target = preprocess_OPERA
         self.size_target_center = size_target_center
         self.full_opera_context = full_opera_context
-        # calculate centre of image to begin crop
-        self.crop = int((self.full_opera_context -
-                        self.size_target_center) / 2)
+        self.crop = int(
+            (self.full_opera_context - self.size_target_center) / 2
+        )  # calculate centre of image to begin crop
         self.preprocess_input = preprocess_HRIT
         self.path_to_sample_ids = path_to_sample_ids
         self.regions_def = regions_def
         self.generate_samples = generate_samples
         self.path_to_sample_ids = path_to_sample_ids
         self.swap_time_ch = swap_time_ch
+        self.years = years
 
         # data splits to load (training/validation/test)
         self.root = project_root
@@ -82,52 +102,80 @@ class RainData(Dataset):
         self.data_split = data_split
         self.splits_df = load_timestamps(splits_path)
         # prepare all elements to load - sample idx will use the object 'self.idx'
-        self.idxs = load_sample_ids(self.data_split, self.splits_df,
-                                    self.len_seq_in, self.len_seq_predict, self.regions,
-                                    self.generate_samples, self.path_to_sample_ids)
+        self.idxs = load_sample_ids(
+            self.data_split,
+            self.splits_df,
+            self.len_seq_in,
+            self.len_seq_predict,
+            self.regions,
+            self.generate_samples,
+            self.years,
+            self.path_to_sample_ids
+        )
 
         # LOAD DATASET
         self.in_ds = load_dataset(
-            self.data_root, self.data_split, self.regions, self.input_product)
-        if self.data_split not in ['test', 'heldout']:
+            self.data_root, self.data_split, self.regions, years, self.input_product
+        )
+        if self.data_split not in ["test", "heldout"]:
             self.out_ds = load_dataset(
-                self.data_root, self.data_split, self.regions, self.output_product)
+                self.data_root, self.data_split, self.regions, years, self.output_product
+            )
         else:
             self.out_ds = []
 
     def __len__(self):
-        """ total number of samples (sequences of in:4-out:1 in our case) to train """
-        #print(len(self.idxs), "-------------------", self.data_split)
+        """total number of samples (sequences of in:4-out:1 in our case) to train"""
+        # print(len(self.idxs), "-------------------", self.data_split)
         return len(self.idxs)
 
     def load_in(self, in_seq, seq_r, metadata, loaded_input=False):
         in0 = time.time()
-        input_data, in_masks = get_sequence(in_seq, self.data_root, self.data_split, seq_r,
-                                            self.input_product, self.sat_bands, self.preprocess_input, self.swap_time_ch, self.in_ds)
+        input_data, in_masks = get_sequence(
+            in_seq,
+            self.data_root,
+            self.data_split,
+            seq_r,
+            self.input_product,
+            self.sat_bands,
+            self.preprocess_input,
+            self.swap_time_ch,
+            self.in_ds,
+        )
 
         if VERBOSE:
-            print(np.shape(input_data), time.time()-in0, "in sequence time")
+            print(np.shape(input_data), time.time() - in0, "in sequence time")
         return input_data, metadata
 
     def load_out(self, out_seq, seq_r, metadata):
         t1 = time.time()
         # GROUND TRUTH (OUTPUT)
-        if self.data_split not in ['test', 'heldout']:
-            output_data, out_masks = get_sequence(out_seq, self.data_root, self.data_split, seq_r,
-                                                  self.output_product, [], self.preprocess_target, self.swap_time_ch, self.out_ds)
+        if self.data_split not in ["test", "heldout"]:
+            output_data, out_masks = get_sequence(
+                out_seq,
+                self.data_root,
+                self.data_split,
+                seq_r,
+                self.output_product,
+                [],
+                self.preprocess_target,
+                self.swap_time_ch,
+                self.out_ds,
+            )
 
             # collapse time to channels
-            metadata['target']['mask'] = out_masks
+            metadata["target"]["mask"] = out_masks
         else:  # Just return [] if its test/heldout data
             output_data = np.array([])
         if VERBOSE:
-            print(time.time()-t1, "out sequence")
+            print(time.time() - t1, "out sequence")
         return output_data, metadata
 
     def load_in_out(self, in_seq, out_seq=None, seq_r=None):
-        metadata = {'input': {'mask': [], 'timestamps': in_seq},
-                    'target': {'mask': [], 'timestamps': out_seq}
-                    }
+        metadata = {
+            "input": {"mask": [], "timestamps": in_seq},
+            "target": {"mask": [], "timestamps": out_seq},
+        }
 
         t0 = time.time()
         input_data, metadata = self.load_in(in_seq, seq_r, metadata)
@@ -138,10 +186,12 @@ class RainData(Dataset):
         return input_data, output_data, metadata
 
     def __getitem__(self, idx):
-        """ load 1 sequence (1 sample) """
+        """load 1 sequence (1 sample)"""
         in_seq = self.idxs[idx][0]
         out_seq = self.idxs[idx][1]
         seq_r = self.idxs[idx][2]
+# #        print("=== DEBUG in_seq: ",in_seq, file=sys.stderr);
+#         print("=== DEBUG in_seq: ",in_seq);
         return self.load_in_out(in_seq, out_seq, seq_r)
 
 
